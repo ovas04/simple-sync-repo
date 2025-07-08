@@ -1,0 +1,158 @@
+name: 'Simple Sync Repository'
+description: 'A lightweight GitHub Action to synchronize repositories between organizations with detailed logging and error handling'
+author: 'ovas04'
+
+branding:
+  icon: 'refresh-cw'
+  color: 'blue'
+
+inputs:
+  source_pat:
+    description: 'Personal Access Token for source organization'
+    required: true
+  target_pat:
+    description: 'Personal Access Token for target organization'
+    required: true
+  source_org:
+    description: 'Source organization name'
+    required: true
+  source_ghec_url:
+    description: 'Source GitHub Enterprise Cloud URL'
+    required: false
+    default: 'github.com'
+  target_ghec_url:
+    description: 'Target GitHub Enterprise Cloud URL'
+    required: false
+    default: 'github.com'
+  repository_name:
+    description: 'Repository name to sync'
+    required: true
+  branch:
+    description: 'Branch to sync'
+    required: false
+    default: 'main'
+
+outputs:
+  sync_status:
+    description: 'Status of the synchronization'
+    value: ${{ steps.sync.outputs.sync_status }}
+  repository_url:
+    description: 'URL of the synchronized repository'
+    value: ${{ steps.sync.outputs.repository_url }}
+  commits_synced:
+    description: 'Number of commits synchronized'
+    value: ${{ steps.sync.outputs.commits_synced }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: 🔄 Validate Inputs
+      shell: bash
+      run: |
+        echo "::group::🔍 Validating Inputs"
+        
+        if [[ -z "${{ inputs.source_pat }}" ]]; then
+          echo "::error::source_pat is required"
+          exit 1
+        fi
+        
+        if [[ -z "${{ inputs.target_pat }}" ]]; then
+          echo "::error::target_pat is required"
+          exit 1
+        fi
+        
+        if [[ -z "${{ inputs.source_org }}" ]]; then
+          echo "::error::source_org is required"
+          exit 1
+        fi
+        
+        if [[ -z "${{ inputs.repository_name }}" ]]; then
+          echo "::error::repository_name is required"
+          exit 1
+        fi
+        
+        echo "✅ All required inputs validated"
+        echo "🎯 Repository: ${{ inputs.repository_name }}"
+        echo "🏢 Source Org: ${{ inputs.source_org }}"
+        echo "🌐 Source URL: ${{ inputs.source_ghec_url }}"
+        echo "🌐 Target URL: ${{ inputs.target_ghec_url }}"
+        echo "🌿 Branch: ${{ inputs.branch }}"
+        echo "::endgroup::"
+
+    - name: 🔄 Sync Repository
+      id: sync
+      shell: bash
+      run: |
+        echo "::group::🔄 Synchronizing Repository"
+        
+        # Set variables
+        SOURCE_PAT="${{ inputs.source_pat }}"
+        TARGET_PAT="${{ inputs.target_pat }}"
+        SOURCE_ORG="${{ inputs.source_org }}"
+        SOURCE_GHEC_URL="${{ inputs.source_ghec_url }}"
+        TARGET_GHEC_URL="${{ inputs.target_ghec_url }}"
+        REPO_NAME="${{ inputs.repository_name }}"
+        BRANCH="${{ inputs.branch }}"
+        
+        # Get current commit count for comparison
+        INITIAL_COMMITS=$(git rev-list --count HEAD 2>/dev/null || echo "0")
+        
+        echo "📥 Cloning from source organization..."
+        
+        # Clone from source organization
+        if git clone --branch "$BRANCH" --single-branch "https://${SOURCE_PAT}@${SOURCE_GHEC_URL}/${SOURCE_ORG}/${REPO_NAME}.git" source-repo; then
+          echo "✅ Successfully cloned source repository"
+        else
+          echo "::error::Failed to clone source repository"
+          exit 1
+        fi
+        
+        cd source-repo
+        
+        # Get commit information
+        LATEST_COMMIT=$(git rev-parse HEAD)
+        COMMIT_COUNT=$(git rev-list --count HEAD)
+        COMMITS_SYNCED=$((COMMIT_COUNT - INITIAL_COMMITS))
+        
+        echo "📤 Pushing to target organization..."
+        
+        # Push to target organization
+        if git push "https://${TARGET_PAT}@${TARGET_GHEC_URL}/${GITHUB_REPOSITORY}.git" "$BRANCH"; then
+          echo "✅ Successfully pushed to target repository"
+          echo "sync_status=success" >> $GITHUB_OUTPUT
+        else
+          echo "::warning::Push failed, repository might already be up to date"
+          echo "sync_status=no_changes" >> $GITHUB_OUTPUT
+        fi
+        
+        # Set outputs
+        echo "repository_url=https://${TARGET_GHEC_URL}/${GITHUB_REPOSITORY}" >> $GITHUB_OUTPUT
+        echo "commits_synced=${COMMITS_SYNCED}" >> $GITHUB_OUTPUT
+        
+        echo "📊 Sync Summary:"
+        echo "  • Latest commit: ${LATEST_COMMIT:0:7}"
+        echo "  • Commits synced: ${COMMITS_SYNCED}"
+        echo "  • Status: $(cat $GITHUB_OUTPUT | grep sync_status | cut -d'=' -f2)"
+        
+        echo "::endgroup::"
+
+    - name: 📊 Summary
+      shell: bash
+      run: |
+        echo "::group::📊 Synchronization Summary"
+        
+        echo "### 🔄 Repository Sync Complete" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| 📁 Repository | ${{ inputs.repository_name }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 🏢 Source Org | ${{ inputs.source_org }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 🌿 Branch | ${{ inputs.branch }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| ✅ Status | ${{ steps.sync.outputs.sync_status }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 📊 Commits Synced | ${{ steps.sync.outputs.commits_synced }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 🔗 Repository URL | ${{ steps.sync.outputs.repository_url }} |" >> $GITHUB_STEP_SUMMARY
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "🎉 **Synchronization completed successfully!**" >> $GITHUB_STEP_SUMMARY
+        
+        echo "::endgroup::"
