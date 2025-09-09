@@ -14,10 +14,11 @@ A lightweight and reliable GitHub Action designed to synchronize repositories be
 - 🎯 **Flexible Configuration**: Easy setup with sensible defaults
 - 🔒 **Enterprise Security**: Secure token handling and validation
 - ⚡ **Lightweight**: No unnecessary complexity, just pure synchronization
+- 🔑 **Flexible Authentication**: Supports both Personal Access Tokens (PAT) and GitHub App tokens
 
 ## 🔧 Usage
 
-### Basic Usage
+### Basic Usage with PAT
 
 ```yaml
 - name: Sync Repository
@@ -29,71 +30,36 @@ A lightweight and reliable GitHub Action designed to synchronize repositories be
     repository_name: ${{ github.event.repository.name }}
 ```
 
-### Advanced Usage
+### Advanced Usage with GitHub App Token
 
 ```yaml
 - name: Sync Repository with Custom Configuration
   uses: ovas04/simple-sync-repo@v1
   with:
-    source_pat: ${{ secrets.ENTERPRISE_GITHUB_TOKEN }}
-    target_pat: ${{ secrets.TARGET_PAT }}
+    source_pat: ${{ secrets.SOURCE_APP_TOKEN }}
+    target_pat: ${{ secrets.TARGET_APP_TOKEN }}
     source_org: 'source-enterprise-org'
     repository_name: 'my-awesome-repo'
+    source_token_type: 'github-app'
+    target_token_type: 'github-app'
     branch: 'main'
     source_ghec_url: 'github.com'
     target_ghec_url: 'github.com'
-```
-
-### Complete Workflow Example
-
-```yaml
-name: Sync Origin Repository
-
-on:
-  workflow_dispatch:
-  schedule:
-    - cron: '0 0 28 * *'  # Monthly sync on the 28th
-  pull_request_target:
-    branches:
-      - main
-
-jobs:
-  sync-branch:
-    if: github.event.repository.fork == false
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Sync with Source Repository
-        id: sync
-        uses: ovas04/simple-sync-repo@v1
-        with:
-          source_pat: ${{ secrets.ENTERPRISE_GITHUB_TOKEN }}
-          target_pat: ${{ secrets.TARGET_PAT }}
-          source_org: 'source-enterprise-org'
-          repository_name: ${{ github.event.repository.name }}
-
-      - name: Display Sync Results
-        run: |
-          echo "Sync Status: ${{ steps.sync.outputs.sync_status }}"
-          echo "Repository URL: ${{ steps.sync.outputs.repository_url }}"
-          echo "Commits Synced: ${{ steps.sync.outputs.commits_synced }}"
 ```
 
 ## 📋 Inputs
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `source_pat` | ✅ | - | Personal Access Token for source organization |
-| `target_pat` | ✅ | - | Personal Access Token for target organization |
+| `source_pat` | ✅ | - | Token for source organization (PAT or GitHub App token) |
+| `target_pat` | ✅ | - | Token for target organization (PAT or GitHub App token) |
 | `source_org` | ✅ | - | Source organization name |
 | `repository_name` | ✅ | - | Repository name to sync |
 | `branch` | ❌ | `main` | Branch to sync |
 | `source_ghec_url` | ❌ | `github.com` | Source GitHub Enterprise Cloud URL |
 | `target_ghec_url` | ❌ | `github.com` | Target GitHub Enterprise Cloud URL |
+| `source_token_type` | ❌ | `pat` | Type of token for source (`pat` or `github-app`) |
+| `target_token_type` | ❌ | `pat` | Type of token for target (`pat` or `github-app`) |
 
 ## 📤 Outputs
 
@@ -105,24 +71,32 @@ jobs:
 
 ## 🔑 Prerequisites
 
-### Required Secrets
+### Authentication Options
 
-#### `SOURCE_PAT` - Source Organization Token
+#### Personal Access Token (PAT)
+- Default authentication method
 - **Scopes needed**: `repo`, `read:org`
-- **Purpose**: Read access to source repositories
-- **Permissions**: Must have access to the source organization
+- **Purpose**: Read access to source repositories and write access to target repositories
+- **Setup**: Create PAT in GitHub settings and add as secrets
 
-#### `TARGET_PAT` - Target Organization Token  
-- **Scopes needed**: `repo`, `admin:org`, `write:org`
-- **Purpose**: Create status checks and push to target repository
-- **Permissions**: Must be able to push to repository and create status checks
-- **Important**: Must be configured as a bypass actor in branch protection rules
+#### GitHub App Token (Alternative)
+- More granular permissions and better security
+- **Required Permissions**:
+  - Repository: Read & Write
+  - Organization: Read
+- **Setup**: 
+  1. Create GitHub App with required permissions
+  2. Install app in source/target organizations
+  3. Generate token and add as secret
+  4. Set `*_token_type: 'github-app'` in workflow
 
 ### Setup Instructions
 
 1. Navigate to **Settings** > **Secrets and variables** > **Actions**
 2. Click **New repository secret**
-3. Add `SOURCE_PAT` and `TARGET_PAT` with their respective tokens
+3. Add your tokens as secrets:
+   - For PAT: Add as `SOURCE_PAT` and `TARGET_PAT`
+   - For GitHub App: Add as any name (e.g., `SOURCE_APP_TOKEN`) and set token type in workflow
 
 ## 🔄 Enterprise Integration
 
@@ -146,19 +120,24 @@ This action is designed for enterprise environments where repository synchroniza
 - **Minimal Permissions**: Only requires necessary scopes for operation
 - **Bypass Configuration**: Requires proper bypass setup for status checks
 - **Audit Trail**: Provides detailed logging for compliance
+- **GitHub Apps**: More secure with fine-grained permissions and automated token rotation
 
 ## 📊 Monitoring and Troubleshooting
 
 ### Common Issues
 
-1. **Authentication Errors**: Verify PAT scopes and permissions
-2. **Status Check Failures**: Ensure TARGET_PAT has bypass permissions
-3. **Sync Failures**: Check repository access and network connectivity
+1. **Authentication Errors**: 
+   - Verify PAT scopes and permissions
+   - For GitHub Apps, ensure proper installation and permissions
+2. **Token Type Mismatch**: Ensure `*_token_type` matches the type of token provided
+3. **Status Check Failures**: Ensure tokens have proper permissions
+4. **Sync Failures**: Check repository access and network connectivity
 
 ### Debug Information
 
 The action provides comprehensive logging:
 - Input validation results
+- Authentication method used
 - Synchronization progress
 - Status check creation details
 - Summary with commit counts and URLs

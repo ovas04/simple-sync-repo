@@ -8,10 +8,10 @@ branding:
 
 inputs:
   source_pat:
-    description: 'Personal Access Token for source organization'
+    description: 'Token for source organization (PAT or GitHub App token)'
     required: true
   target_pat:
-    description: 'Personal Access Token for target organization'
+    description: 'Token for target organization (PAT or GitHub App token)'
     required: true
   source_org:
     description: 'Source organization name'
@@ -31,6 +31,14 @@ inputs:
     description: 'Branch to sync'
     required: false
     default: 'main'
+  source_token_type:
+    description: 'Type of token for source (pat or github-app)'
+    required: false
+    default: 'pat'
+  target_token_type:
+    description: 'Type of token for target (pat or github-app)'
+    required: false
+    default: 'pat'
 
 outputs:
   sync_status:
@@ -71,12 +79,25 @@ runs:
           exit 1
         fi
         
+        # Validate token types
+        if [[ "${{ inputs.source_token_type }}" != "pat" && "${{ inputs.source_token_type }}" != "github-app" ]]; then
+          echo "::error::source_token_type must be 'pat' or 'github-app'"
+          exit 1
+        fi
+        
+        if [[ "${{ inputs.target_token_type }}" != "pat" && "${{ inputs.target_token_type }}" != "github-app" ]]; then
+          echo "::error::target_token_type must be 'pat' or 'github-app'"
+          exit 1
+        fi
+        
         echo "✅ All required inputs validated"
         echo "🎯 Repository: ${{ inputs.repository_name }}"
         echo "🏢 Source Org: ${{ inputs.source_org }}"
         echo "🌐 Source URL: ${{ inputs.source_ghec_url }}"
         echo "🌐 Target URL: ${{ inputs.target_ghec_url }}"
         echo "🌿 Branch: ${{ inputs.branch }}"
+        echo "🔑 Source Token Type: ${{ inputs.source_token_type }}"
+        echo "🔑 Target Token Type: ${{ inputs.target_token_type }}"
         echo "::endgroup::"
 
     - name: 🔄 Sync Repository
@@ -93,17 +114,35 @@ runs:
         TARGET_GHEC_URL="${{ inputs.target_ghec_url }}"
         REPO_NAME="${{ inputs.repository_name }}"
         BRANCH="${{ inputs.branch }}"
+        SOURCE_TOKEN_TYPE="${{ inputs.source_token_type }}"
+        TARGET_TOKEN_TYPE="${{ inputs.target_token_type }}"
+        
+        # Format URLs correctly according to token type
+        if [[ "$SOURCE_TOKEN_TYPE" == "github-app" ]]; then
+          SOURCE_URL="https://x-access-token:${SOURCE_PAT}@${SOURCE_GHEC_URL}/${SOURCE_ORG}/${REPO_NAME}.git"
+        else
+          SOURCE_URL="https://${SOURCE_PAT}@${SOURCE_GHEC_URL}/${SOURCE_ORG}/${REPO_NAME}.git"
+        fi
+        
+        if [[ "$TARGET_TOKEN_TYPE" == "github-app" ]]; then
+          TARGET_URL="https://x-access-token:${TARGET_PAT}@${TARGET_GHEC_URL}/${GITHUB_REPOSITORY}.git"
+        else
+          TARGET_URL="https://${TARGET_PAT}@${TARGET_GHEC_URL}/${GITHUB_REPOSITORY}.git"
+        fi
         
         # Get current commit count for comparison
         INITIAL_COMMITS=$(git rev-list --count HEAD 2>/dev/null || echo "0")
         
         echo "📥 Cloning from source organization..."
         
+        # Git configuration to handle tokens securely
+        git config --global credential.helper store
+        
         # Clone from source organization
-        if git clone --branch "$BRANCH" --single-branch "https://${SOURCE_PAT}@${SOURCE_GHEC_URL}/${SOURCE_ORG}/${REPO_NAME}.git" source-repo; then
-          echo "✅ Successfully cloned source repository"
+        if git clone --branch "$BRANCH" --single-branch "$SOURCE_URL" source-repo; then
+          echo "✅ Source repository cloned successfully"
         else
-          echo "::error::Failed to clone source repository"
+          echo "::error::Error cloning source repository"
           exit 1
         fi
         
@@ -116,23 +155,34 @@ runs:
         
         echo "📤 Pushing to target organization..."
         
-        # Push to target organization
-        if git push "https://${TARGET_PAT}@${TARGET_GHEC_URL}/${GITHUB_REPOSITORY}.git" "$BRANCH"; then
-          echo "✅ Successfully pushed to target repository"
+        # Push to target organization with proper authentication format
+        if git push "$TARGET_URL" "$BRANCH"; then
+          echo "✅ Successfully synchronized to target repository"
           echo "sync_status=success" >> $GITHUB_OUTPUT
         else
-          echo "::warning::Push failed, repository might already be up to date"
-          echo "sync_status=no_changes" >> $GITHUB_OUTPUT
+          PUSH_EXIT_CODE=$?
+          # Some errors are expected if the repo is already up to date
+          if [[ $PUSH_EXIT_CODE -eq 1 ]]; then
+            echo "⚠️ Push failed, repository may already be up to date"
+            echo "sync_status=no_changes" >> $GITHUB_OUTPUT
+          else
+            echo "::error::Error synchronizing (code: $PUSH_EXIT_CODE)"
+            echo "sync_status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
         fi
         
         # Set outputs
         echo "repository_url=https://${TARGET_GHEC_URL}/${GITHUB_REPOSITORY}" >> $GITHUB_OUTPUT
         echo "commits_synced=${COMMITS_SYNCED}" >> $GITHUB_OUTPUT
         
-        echo "📊 Sync Summary:"
+        echo "📊 Synchronization summary:"
         echo "  • Latest commit: ${LATEST_COMMIT:0:7}"
-        echo "  • Commits synced: ${COMMITS_SYNCED}"
+        echo "  • Commits synchronized: ${COMMITS_SYNCED}"
         echo "  • Status: $(cat $GITHUB_OUTPUT | grep sync_status | cut -d'=' -f2)"
+        
+        # Clean up credentials (Secret Protection)
+        git config --global --unset credential.helper
         
         echo "::endgroup::"
 
@@ -141,18 +191,16 @@ runs:
       run: |
         echo "::group::📊 Synchronization Summary"
         
-        echo "### 🔄 Repository Sync Complete" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔄 Repository synchronization completed" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
         echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
         echo "| 📁 Repository | ${{ inputs.repository_name }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| 🏢 Source Org | ${{ inputs.source_org }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 🏢 Source Organization | ${{ inputs.source_org }} |" >> $GITHUB_STEP_SUMMARY
         echo "| 🌿 Branch | ${{ inputs.branch }} |" >> $GITHUB_STEP_SUMMARY
         echo "| ✅ Status | ${{ steps.sync.outputs.sync_status }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| 📊 Commits Synced | ${{ steps.sync.outputs.commits_synced }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 📊 Commits synchronized | ${{ steps.sync.outputs.commits_synced }} |" >> $GITHUB_STEP_SUMMARY
         echo "| 🔗 Repository URL | ${{ steps.sync.outputs.repository_url }} |" >> $GITHUB_STEP_SUMMARY
         
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "🎉 **Synchronization completed successfully!**" >> $GITHUB_STEP_SUMMARY
-        
-        echo "::endgroup::"
